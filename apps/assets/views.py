@@ -1,12 +1,12 @@
+from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.accounts.permissions import IsAssetApiPermission
-
-from apps.accounts.permissions import IsManagerOrSuperAdmin
 from apps.assets.models import (
     Asset,
     AssetActivityLog,
@@ -21,6 +21,8 @@ from apps.assets.serializers import (
     AssetSerializer,
     LocationSerializer,
 )
+
+User = get_user_model()
 
 
 class LocationViewSet(viewsets.ModelViewSet):
@@ -148,50 +150,45 @@ class AssetAssignmentViewSet(viewsets.ModelViewSet):
             },
         )
 
-        @action(detail=True, methods=["post"], url_path="return")
-        def return_asset(self, request, pk=None):
-            """
-            Marks an active assignment as returned.
+    @action(detail=True, methods=["post"], url_path="return")
+    def return_asset(self, request, pk=None):
+        """
+        Marks an active assignment as returned.
+        """
 
-            This automatically:
-            - sets returned_at
-            - changes asset status back to AVAILABLE
-            - creates an activity log
-            """
+        assignment = self.get_object()
 
-            assignment = self.get_object()
-
-            if assignment.returned_at is not None:
-                return Response(
-                    {
-                        "detail": "This asset assignment has already been returned."
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            assignment.returned_at = timezone.now()
-            assignment.save(update_fields=["returned_at"])
-
-            assignment.asset.status = Asset.Status.AVAILABLE
-            assignment.asset.updated_by = request.user
-            assignment.asset.save(update_fields=["status", "updated_by", "updated_at"])
-
-            AssetActivityLog.objects.create(
-                asset=assignment.asset,
-                event_type=AssetActivityLog.EventType.RETURNED,
-                actor=request.user,
-                message=(
-                    f"Asset {assignment.asset.asset_tag} was returned by "
-                    f"{assignment.assigned_to.username}."
-                ),
-                metadata={
-                    "assigned_to": assignment.assigned_to.username,
-                    "returned_at": assignment.returned_at.isoformat(),
+        if assignment.returned_at is not None:
+            return Response(
+                {
+                    "detail": "This asset assignment has already been returned."
                 },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-            serializer = self.get_serializer(assignment)
-            return Response(serializer.data, status=status.HTTP_200_OK)
+        assignment.returned_at = timezone.now()
+        assignment.save(update_fields=["returned_at"])
+
+        assignment.asset.status = Asset.Status.AVAILABLE
+        assignment.asset.updated_by = request.user
+        assignment.asset.save(update_fields=["status", "updated_by", "updated_at"])
+
+        AssetActivityLog.objects.create(
+            asset=assignment.asset,
+            event_type=AssetActivityLog.EventType.RETURNED,
+            actor=request.user,
+            message=(
+                f"Asset {assignment.asset.asset_tag} was returned by "
+                f"{assignment.assigned_to.username}."
+            ),
+            metadata={
+                "assigned_to": assignment.assigned_to.username,
+                "returned_at": assignment.returned_at.isoformat(),
+            },
+        )
+
+        serializer = self.get_serializer(assignment)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class AssetMaintenanceLogViewSet(viewsets.ModelViewSet):
@@ -262,3 +259,52 @@ class AssetActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
             "asset",
             "actor",
         ).all()
+
+
+class DashboardStatsAPIView(APIView):
+    """
+    API endpoint for dashboard summary statistics.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        recent_logs = AssetActivityLog.objects.select_related(
+            "asset",
+            "actor",
+        ).order_by("-created_at")[:5]
+
+        recent_activity_logs = []
+
+        for log in recent_logs:
+            recent_activity_logs.append(
+                {
+                    "id": log.id,
+                    "asset_tag": log.asset.asset_tag,
+                    "event_type": log.event_type,
+                    "actor": log.actor.username if log.actor else None,
+                    "message": log.message,
+                    "created_at": log.created_at.isoformat(),
+                }
+            )
+
+        data = {
+            "total_assets": Asset.objects.count(),
+            "available_assets": Asset.objects.filter(
+                status=Asset.Status.AVAILABLE
+            ).count(),
+            "assigned_assets": Asset.objects.filter(
+                status=Asset.Status.ASSIGNED
+            ).count(),
+            "maintenance_assets": Asset.objects.filter(
+                status=Asset.Status.MAINTENANCE
+            ).count(),
+            "retired_assets": Asset.objects.filter(
+                status=Asset.Status.RETIRED
+            ).count(),
+            "total_locations": Location.objects.count(),
+            "total_users": User.objects.filter(is_active=True).count(),
+            "recent_activity_logs": recent_activity_logs,
+        }
+
+        return Response(data)

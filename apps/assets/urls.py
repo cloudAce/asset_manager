@@ -1,3 +1,4 @@
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 
 from apps.assets.views import (
@@ -5,6 +6,7 @@ from apps.assets.views import (
     AssetAssignmentViewSet,
     AssetMaintenanceLogViewSet,
     AssetViewSet,
+    DashboardStatsAPIView,
     LocationViewSet,
 )
 
@@ -15,4 +17,8 @@ router.register("assignments", AssetAssignmentViewSet, basename="asset-assignmen
 router.register("maintenance-logs", AssetMaintenanceLogViewSet, basename="maintenance-log")
 router.register("activity-logs", AssetActivityLogViewSet, basename="activity-log")
 
-urlpatterns = router.urls
+urlpatterns = [
+    path("dashboard/stats/", DashboardStatsAPIView.as_view(), name="dashboard-stats"),
+]
+
+urlpatterns += router.urls
