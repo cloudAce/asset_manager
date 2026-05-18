@@ -1,5 +1,10 @@
-from rest_framework import viewsets
+from django.utils import timezone
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from apps.accounts.permissions import IsAssetApiPermission
 
 from apps.accounts.permissions import IsManagerOrSuperAdmin
 from apps.assets.models import (
@@ -27,7 +32,7 @@ class LocationViewSet(viewsets.ModelViewSet):
 
     queryset = Location.objects.all()
     serializer_class = LocationSerializer
-    permission_classes = [IsManagerOrSuperAdmin]
+    permission_classes = [IsAssetApiPermission]
     search_fields = ["name", "building", "floor", "room"]
     ordering_fields = ["name", "created_at"]
 
@@ -40,7 +45,7 @@ class AssetViewSet(viewsets.ModelViewSet):
     """
 
     serializer_class = AssetSerializer
-    permission_classes = [IsManagerOrSuperAdmin]
+    permission_classes = [IsAssetApiPermission]
     search_fields = [
         "asset_tag",
         "name",
@@ -103,7 +108,7 @@ class AssetAssignmentViewSet(viewsets.ModelViewSet):
     """
 
     serializer_class = AssetAssignmentSerializer
-    permission_classes = [IsManagerOrSuperAdmin]
+    permission_classes = [IsAssetApiPermission]
     search_fields = [
         "asset__asset_tag",
         "asset__name",
@@ -143,6 +148,51 @@ class AssetAssignmentViewSet(viewsets.ModelViewSet):
             },
         )
 
+        @action(detail=True, methods=["post"], url_path="return")
+        def return_asset(self, request, pk=None):
+            """
+            Marks an active assignment as returned.
+
+            This automatically:
+            - sets returned_at
+            - changes asset status back to AVAILABLE
+            - creates an activity log
+            """
+
+            assignment = self.get_object()
+
+            if assignment.returned_at is not None:
+                return Response(
+                    {
+                        "detail": "This asset assignment has already been returned."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            assignment.returned_at = timezone.now()
+            assignment.save(update_fields=["returned_at"])
+
+            assignment.asset.status = Asset.Status.AVAILABLE
+            assignment.asset.updated_by = request.user
+            assignment.asset.save(update_fields=["status", "updated_by", "updated_at"])
+
+            AssetActivityLog.objects.create(
+                asset=assignment.asset,
+                event_type=AssetActivityLog.EventType.RETURNED,
+                actor=request.user,
+                message=(
+                    f"Asset {assignment.asset.asset_tag} was returned by "
+                    f"{assignment.assigned_to.username}."
+                ),
+                metadata={
+                    "assigned_to": assignment.assigned_to.username,
+                    "returned_at": assignment.returned_at.isoformat(),
+                },
+            )
+
+            serializer = self.get_serializer(assignment)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 class AssetMaintenanceLogViewSet(viewsets.ModelViewSet):
     """
@@ -150,7 +200,7 @@ class AssetMaintenanceLogViewSet(viewsets.ModelViewSet):
     """
 
     serializer_class = AssetMaintenanceLogSerializer
-    permission_classes = [IsManagerOrSuperAdmin]
+    permission_classes = [IsAssetApiPermission]
     search_fields = [
         "asset__asset_tag",
         "asset__name",

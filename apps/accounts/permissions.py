@@ -1,10 +1,13 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
 
-class IsManagerOrSuperAdmin(BasePermission):
+class IsAssetApiPermission(BasePermission):
     """
-    Allows full access to Manager and SuperAdmin users.
-    Standard users can only read safe methods.
+    Permission rules for the asset management API.
+
+    - Authenticated users can read data.
+    - Managers and SuperAdmins can create and update.
+    - Only SuperAdmins can delete.
     """
 
     def has_permission(self, request, view):
@@ -14,7 +17,26 @@ class IsManagerOrSuperAdmin(BasePermission):
         if request.method in SAFE_METHODS:
             return True
 
+        if request.method == "DELETE":
+            return request.user.is_superadmin()
+
         return request.user.is_manager() or request.user.is_superadmin()
+
+
+class IsManagerOrSuperAdmin(BasePermission):
+    """
+    Allows access only to Manager and SuperAdmin users.
+    """
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and (
+                request.user.is_manager()
+                or request.user.is_superadmin()
+            )
+        )
 
 
 class IsSuperAdminOnly(BasePermission):
