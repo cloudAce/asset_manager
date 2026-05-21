@@ -35,6 +35,7 @@ class LocationViewSet(viewsets.ModelViewSet):
     queryset = Location.objects.all()
     serializer_class = LocationSerializer
     permission_classes = [IsAssetApiPermission]
+    filterset_fields = ["building", "floor", "room"]
     search_fields = ["name", "building", "floor", "room"]
     ordering_fields = ["name", "created_at"]
 
